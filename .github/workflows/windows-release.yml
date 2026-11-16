@@ -1,0 +1,96 @@
+name: Build and release Windows app
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Source app integration test
+        run: |
+          python app.py --smoke-test smoke-source.json
+          if ($LASTEXITCODE -ne 0) { Get-Content smoke-source.json; throw 'Source smoke test failed' }
+      - name: Collect dependency licenses
+        run: python scripts/collect_licenses.py
+      - name: Build standalone executable
+        run: python -m PyInstaller --clean --noconfirm NetMon.spec
+      - name: Test packaged executable twice
+        shell: pwsh
+        run: |
+          foreach ($attempt in 1..2) {
+            $report = Join-Path $PWD "smoke-exe-$attempt.json"
+            $p = Start-Process -FilePath (Join-Path $PWD 'dist/NetMon.exe') -ArgumentList @('--smoke-test', "`"$report`"") -PassThru
+            if (-not $p.WaitForExit(90000)) { Stop-Process -Id $p.Id -Force; throw 'Executable test timed out' }
+            if (-not (Test-Path $report)) { throw "Executable did not write its report (exit $($p.ExitCode))" }
+            $result = Get-Content $report -Raw | ConvertFrom-Json
+            if (-not $result.ok -or $p.ExitCode -ne 0) { Get-Content $report; throw 'Executable smoke test failed' }
+            Get-Content $report
+          }
+      - name: Package downloads and checksums
+        shell: pwsh
+        run: |
+          $version = python -c "from app_paths import VERSION; print(VERSION)"
+          "NETMON_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory release-assets, dist/NetMon -Force | Out-Null
+          Copy-Item dist/NetMon.exe dist/NetMon/
+          Copy-Item README.md, THIRD_PARTY_NOTICES.md dist/NetMon/
+          Copy-Item licenses dist/NetMon/ -Recurse
+          python -m pip freeze | Out-File -Encoding utf8 dist/NetMon/build-dependencies.txt
+          Copy-Item smoke-exe-1.json dist/NetMon/build-validation.json
+          Compress-Archive -Path dist/NetMon -DestinationPath "release-assets/NetMon-$version-windows-x64.zip"
+          Copy-Item dist/NetMon.exe release-assets/
+          Copy-Item smoke-exe-1.json release-assets/build-validation.json
+          Copy-Item dist/NetMon/build-dependencies.txt release-assets/
+          Get-ChildItem release-assets -File | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Out-File -Encoding ascii release-assets/SHA256SUMS.txt
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetMon-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+      - name: Publish new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "v$env:NETMON_VERSION"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Output "Release $tag already exists; preserved its original downloads. New build is in Actions artifacts."
+            exit 0
+          }
+          $assets = (Get-ChildItem release-assets -File).FullName
+          gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "NetMon $env:NETMON_VERSION" --notes-file RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed' }
+      - name: Capture interface preview
+        run: |
+          python -m pip install pillow
+          python scripts/capture_preview.py
+      - name: Upload diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-reports
+          path: |
+            smoke*.json
+            preview-windows.png
+          if-no-files-found: ignore

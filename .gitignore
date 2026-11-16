@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
+*.log
+build/
+dist/
+smoke*.json
+smoke*.png
+*.egg-info/
+.pytest_cache/
+release-assets/
+preview-*.png
+licenses/dependencies/
