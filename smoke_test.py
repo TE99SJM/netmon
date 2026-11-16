@@ -21,6 +21,9 @@ def run(report_path):
         report['version']=VERSION
         if __import__('sys').platform=='win32':
             from bleak.backends.winrt.scanner import BleakScannerWinRT
+            assert isinstance(network_scan.get_adapters(), list)
+            assert isinstance(network_scan.read_arp_table(), list)
+            report['checks'].append('Windows adapter enumeration and native ARP command')
         report['checks'].append('Bundled dependencies and platform BLE backend import')
         with TemporaryDirectory(prefix='netmon-smoke-') as folder:
             a=network_scan.Adapter('Example Wi-Fi','192.0.2.100','192.0.2.0/24')

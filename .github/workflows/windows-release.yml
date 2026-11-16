@@ -43,6 +43,10 @@ jobs:
             if (-not $result.ok -or $p.ExitCode -ne 0) { Get-Content $report; throw 'Executable smoke test failed' }
             Get-Content $report
           }
+      - name: Capture interface preview
+        run: |
+          python -m pip install pillow
+          python scripts/capture_preview.py
       - name: Package downloads and checksums
         shell: pwsh
         run: |
@@ -58,9 +62,10 @@ jobs:
           Copy-Item dist/NetMon.exe release-assets/
           Copy-Item smoke-exe-1.json release-assets/build-validation.json
           Copy-Item dist/NetMon/build-dependencies.txt release-assets/
-          Get-ChildItem release-assets -File | Sort-Object Name | ForEach-Object {
+          $checksums = Get-ChildItem release-assets -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
-          } | Out-File -Encoding ascii release-assets/SHA256SUMS.txt
+          }
+          $checksums | Set-Content -Encoding ascii release-assets/SHA256SUMS.txt
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -81,10 +86,6 @@ jobs:
           $assets = (Get-ChildItem release-assets -File).FullName
           gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "NetMon $env:NETMON_VERSION" --notes-file RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed' }
-      - name: Capture interface preview
-        run: |
-          python -m pip install pillow
-          python scripts/capture_preview.py
       - name: Upload diagnostic reports
         if: always()
         uses: actions/upload-artifact@v4
