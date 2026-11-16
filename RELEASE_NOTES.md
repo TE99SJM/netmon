@@ -1,3 +1,5 @@
+NetMon 1.0.1 improves the Windows layout for smaller displays and restores the intended large summary counters.
+
 A polished, standalone Windows edition of the original NetMon network and Bluetooth monitor.
 
 - Refreshed interface, summary cards, searchable/sortable device tables, CSV export, and Activity history.
